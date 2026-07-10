@@ -75,21 +75,17 @@ local function on_option_change()
 	DORN.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
 end
 
-local function movement_blocked()
-	for state in pairs(BLOCKED_MOVE_STATES) do
-		if IsMoveState(state) then
-			return true
-		end
-	end
-	return false
-end
-
 local function input_allowed()
 	if not DORN.sys.ready(MOD_ID, db, on_option_change) then
 		return false
 	end
-	if device():is_paused() or not actor_menu.is_hud_free() or movement_blocked() then
+	if device():is_paused() or not actor_menu.is_hud_free() then
 		return false
+	end
+	for state in pairs(BLOCKED_MOVE_STATES) do
+		if IsMoveState(state) then
+			return false
+		end
 	end
 	return true
 end
@@ -115,10 +111,6 @@ local function bind_is_toggle(bind)
 		return get_console_cmd(1, "g_walk_toggle") or false
 	end
 	return false
-end
-
-local function uses_toggle_steps()
-	return bind_is_toggle(key_bindings.kCROUCH) or bind_is_toggle(key_bindings.kACCEL)
 end
 
 local function bind_dik(bind)
@@ -161,10 +153,6 @@ local function drive_bind(bind, active)
 	else
 		set_bind_down(bind, active)
 	end
-end
-
-local function clear_pending()
-	pending_goal = nil
 end
 
 -- One engine step toward goal; returns true when goal reached.
@@ -214,15 +202,15 @@ end
 local function run_transition(goal)
 	pending_goal = goal
 	with_synthetic_input(function()
-		if uses_toggle_steps() then
+		if bind_is_toggle(key_bindings.kCROUCH) or bind_is_toggle(key_bindings.kACCEL) then
 			if step_toward(goal) then
-				clear_pending()
+				pending_goal = nil
 			end
 		else
 			while pending_goal and not step_toward(pending_goal) do
 				-- hold mode: engine accepts multiple press/release in one frame
 			end
-			clear_pending()
+			pending_goal = nil
 		end
 	end)
 	log(string.format("transition -> %s (engine: %s)", goal, get_pose()))
@@ -275,7 +263,7 @@ local function on_walk_key_release()
 		with_synthetic_input(function()
 			drive_bind(key_bindings.kACCEL, false)
 		end)
-		clear_pending()
+		pending_goal = nil
 		log(string.format("walk key release -> %s", get_pose()))
 		overlay(LOG.POSE, "pose: " .. get_pose())
 	end
@@ -321,7 +309,7 @@ local function on_actor_on_update()
 	if pending_goal and CONFIG.enabled and input_allowed() then
 		with_synthetic_input(function()
 			if step_toward(pending_goal) then
-				clear_pending()
+				pending_goal = nil
 			end
 		end)
 	end
