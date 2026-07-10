@@ -1,0 +1,341 @@
+--[[
+	Dorn's Pose Controls
+
+	Maps movement pose keys directly instead of cycling:
+	- Crouch bind -> crouch only (mcCrouch, never mcAccel)
+	- Walk/Low Crouch bind -> prone only (mcCrouch + mcAccel)
+	- Sprint bind -> vanilla stand + sprint
+	- MCM walk key -> walk only (mcAccel without mcCrouch)
+
+	Reacts to the player's actual bind presses. Multi-step pose changes run one
+	engine bind step per update when crouch/walk use toggle mode (IsMoveState does
+	not update between synthetic pulses in the same frame).
+
+	Engine move states remain the source of truth so Dorns_Prone_Fix and other
+	mods can read pose via IsMoveState("mcCrouch") / IsMoveState("mcAccel").
+]]
+
+local MOD_ID = "dorn_pose_controls"
+local DORN_COMMON_VERSION = "dorn_common_f575cc9b" -- managed by sync-dorn-common.sh, do not hand-edit
+
+local DORN
+
+local POSE = {
+	STAND = "stand",
+	CROUCH = "crouch",
+	PRONE = "prone",
+	WALK = "walk",
+}
+
+local BLOCKED_MOVE_STATES = {
+	mcJump = true,
+	mcFall = true,
+	mcClimb = true,
+}
+
+local LOG = {
+	POSE = { order = 1, color = "yellow" },
+	KEY = { order = 2, color = "cyan" },
+}
+
+local CONFIG = {
+	enabled = true,
+	walk_key = nil,
+	debug_log = false,
+	debug_overlay = false,
+}
+
+local applying_pose = false
+local pending_goal = nil
+
+local function log(msg)
+	if not DORN.dbg then
+		return
+	end
+	if CONFIG.debug_log then
+		DORN.dbg.log(MOD_ID, tostring(msg))
+	end
+end
+
+local function overlay(log_type, msg)
+	if not DORN.dbg then
+		return
+	end
+	if CONFIG.debug_overlay then
+		local slot = log_type or LOG.POSE
+		DORN.dbg.overlay(MOD_ID, slot.order, tostring(msg), slot.color)
+	end
+end
+
+local function on_option_change()
+	CONFIG.enabled = DORN.mcm.bool(MOD_ID, "main/enabled", true)
+	CONFIG.walk_key = DORN.mcm.key(MOD_ID, "main/walk_key")
+	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
+	CONFIG.debug_overlay = DORN.mcm.bool(MOD_ID, "development/debug_overlay", false)
+	DORN.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
+end
+
+local function movement_blocked()
+	for state in pairs(BLOCKED_MOVE_STATES) do
+		if IsMoveState(state) then
+			return true
+		end
+	end
+	return false
+end
+
+local function input_allowed()
+	if not DORN.sys.ready(MOD_ID, db, on_option_change) then
+		return false
+	end
+	if device():is_paused() or not actor_menu.is_hud_free() or movement_blocked() then
+		return false
+	end
+	return true
+end
+
+local function get_pose()
+	if IsMoveState("mcCrouch") then
+		if IsMoveState("mcAccel") then
+			return POSE.PRONE
+		end
+		return POSE.CROUCH
+	end
+	if IsMoveState("mcAccel") then
+		return POSE.WALK
+	end
+	return POSE.STAND
+end
+
+local function bind_is_toggle(bind)
+	if bind == key_bindings.kCROUCH then
+		return get_console_cmd(1, "g_crouch_toggle") or false
+	end
+	if bind == key_bindings.kACCEL then
+		return get_console_cmd(1, "g_walk_toggle") or false
+	end
+	return false
+end
+
+local function uses_toggle_steps()
+	return bind_is_toggle(key_bindings.kCROUCH) or bind_is_toggle(key_bindings.kACCEL)
+end
+
+local function bind_dik(bind)
+	local dik = bind_to_dik(bind)
+	if dik and dik ~= 0 then
+		return dik
+	end
+end
+
+local function with_synthetic_input(fn)
+	applying_pose = true
+	fn()
+	applying_pose = false
+end
+
+local function pulse_bind(bind)
+	local dik = bind_dik(bind)
+	if not dik then
+		return
+	end
+	level.press_action(dik)
+	level.release_action(dik)
+end
+
+local function set_bind_down(bind, down)
+	local dik = bind_dik(bind)
+	if not dik then
+		return
+	end
+	if down then
+		level.press_action(dik)
+	else
+		level.release_action(dik)
+	end
+end
+
+local function drive_bind(bind, active)
+	if bind_is_toggle(bind) then
+		pulse_bind(bind)
+	else
+		set_bind_down(bind, active)
+	end
+end
+
+local function clear_pending()
+	pending_goal = nil
+end
+
+-- One engine step toward goal; returns true when goal reached.
+local function step_toward(goal)
+	local pose = get_pose()
+	if pose == goal then
+		return true
+	end
+
+	if goal == POSE.STAND then
+		if pose == POSE.PRONE then
+			drive_bind(key_bindings.kACCEL, false)
+		elseif pose == POSE.CROUCH then
+			drive_bind(key_bindings.kCROUCH, false)
+		elseif pose == POSE.WALK then
+			drive_bind(key_bindings.kACCEL, false)
+		end
+	elseif goal == POSE.CROUCH then
+		if pose == POSE.PRONE then
+			drive_bind(key_bindings.kACCEL, false)
+		elseif pose == POSE.WALK then
+			drive_bind(key_bindings.kACCEL, false)
+		elseif pose == POSE.STAND then
+			drive_bind(key_bindings.kCROUCH, true)
+		end
+	elseif goal == POSE.PRONE then
+		if pose == POSE.WALK then
+			drive_bind(key_bindings.kACCEL, false)
+		elseif pose == POSE.STAND then
+			drive_bind(key_bindings.kCROUCH, true)
+		elseif pose == POSE.CROUCH then
+			drive_bind(key_bindings.kACCEL, true)
+		end
+	elseif goal == POSE.WALK then
+		if pose == POSE.PRONE then
+			drive_bind(key_bindings.kACCEL, false)
+		elseif pose == POSE.CROUCH then
+			drive_bind(key_bindings.kCROUCH, false)
+		elseif pose == POSE.STAND then
+			drive_bind(key_bindings.kACCEL, true)
+		end
+	end
+
+	return get_pose() == goal
+end
+
+local function run_transition(goal)
+	pending_goal = goal
+	with_synthetic_input(function()
+		if uses_toggle_steps() then
+			if step_toward(goal) then
+				clear_pending()
+			end
+		else
+			while pending_goal and not step_toward(pending_goal) do
+				-- hold mode: engine accepts multiple press/release in one frame
+			end
+			clear_pending()
+		end
+	end)
+	log(string.format("transition -> %s (engine: %s)", goal, get_pose()))
+end
+
+local function on_crouch_key(flags)
+	local pose = get_pose()
+
+	if pose == POSE.PRONE or pose == POSE.WALK then
+		if flags then
+			flags.ret_value = false
+		end
+		run_transition(POSE.CROUCH)
+		overlay(LOG.KEY, "crouch key")
+		return
+	end
+
+	overlay(LOG.KEY, "crouch key")
+end
+
+local function on_prone_key(flags)
+	if flags then
+		flags.ret_value = false
+	end
+	local pose = get_pose()
+	if pose == POSE.PRONE then
+		run_transition(POSE.STAND)
+	else
+		run_transition(POSE.PRONE)
+	end
+	overlay(LOG.KEY, "prone key")
+end
+
+local function on_walk_key_press()
+	local pose = get_pose()
+	local walk_toggle = get_console_cmd(1, "g_walk_toggle") or false
+	if pose == POSE.WALK and walk_toggle then
+		run_transition(POSE.STAND)
+	else
+		run_transition(POSE.WALK)
+	end
+	overlay(LOG.KEY, "walk key")
+end
+
+local function on_walk_key_release()
+	if get_console_cmd(1, "g_walk_toggle") then
+		return
+	end
+	if get_pose() == POSE.WALK then
+		with_synthetic_input(function()
+			drive_bind(key_bindings.kACCEL, false)
+		end)
+		clear_pending()
+		log(string.format("walk key release -> %s", get_pose()))
+		overlay(LOG.POSE, "pose: " .. get_pose())
+	end
+end
+
+local function on_before_key_press(_key, bind, _dis, flags)
+	if applying_pose or not CONFIG.enabled or not input_allowed() then
+		return
+	end
+
+	if bind == key_bindings.kCROUCH then
+		on_crouch_key(flags)
+	elseif bind == key_bindings.kACCEL then
+		on_prone_key(flags)
+	end
+end
+
+local function on_key_press(key)
+	if not CONFIG.enabled or not CONFIG.walk_key or key ~= CONFIG.walk_key then
+		return
+	end
+	if not input_allowed() then
+		return
+	end
+	on_walk_key_press()
+end
+
+local function on_key_release(key)
+	if not CONFIG.enabled or not CONFIG.walk_key or key ~= CONFIG.walk_key then
+		return
+	end
+	if not input_allowed() then
+		return
+	end
+	on_walk_key_release()
+end
+
+local function on_actor_on_update()
+	if not DORN.sys.ready(MOD_ID, db, on_option_change) then
+		return
+	end
+
+	if pending_goal and CONFIG.enabled and input_allowed() then
+		with_synthetic_input(function()
+			if step_toward(pending_goal) then
+				clear_pending()
+			end
+		end)
+	end
+
+	overlay(LOG.POSE, "pose: " .. get_pose())
+end
+
+function on_game_start()
+	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+
+	RegisterScriptCallback("on_before_key_press", on_before_key_press)
+	RegisterScriptCallback("on_key_press", on_key_press)
+	RegisterScriptCallback("on_key_release", on_key_release)
+	RegisterScriptCallback("actor_on_update", on_actor_on_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
+	log("loaded")
+end

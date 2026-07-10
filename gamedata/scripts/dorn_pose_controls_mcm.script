@@ -1,0 +1,55 @@
+function on_mcm_load()
+	return {
+		id = "dorn_pose_controls",
+		text = "ui_mcm_menu_dorn_pose_controls",
+		gr = {
+			{
+				id = "main",
+				sh = true,
+				text = "Main",
+				gr = {
+					{
+						id = "main_description",
+						type = "desc",
+						text = "ui_mcm_dorn_pose_controls_main_description",
+					},
+					{
+						id = "enabled",
+						type = "check",
+						val = 1,
+						def = true,
+						hint = "dorn_pose_controls_enabled",
+					},
+					{
+						id = "walk_key",
+						type = "key_bind",
+						val = 2,
+						def = -1,
+						hint = "dorn_pose_controls_walk_key",
+					},
+				},
+			},
+			{
+				id = "development",
+				sh = true,
+				text = "Development",
+				gr = {
+					{
+						id = "debug_overlay",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_pose_controls_debug_overlay",
+					},
+					{
+						id = "debug_log",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_pose_controls_debug_log",
+					},
+				},
+			},
+		},
+	}
+end
