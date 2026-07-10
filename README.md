@@ -11,13 +11,12 @@ Changing pose (stand/crouch/prone/walk) is now a 1 to 1 mapping.
 - **Walk key (new bind for this mod)** always walk (means standing if not).
 - **Sprint key** unchanged (stand + sprint)
 
-Crouch and walk follow your game toggle/hold settings.
-
 ## Installation
 
 1. Download the latest release from https://github.com/JoshuaCarter/GAMMA-Pose-Controls/releases
 2. Install via MO2 like normal
-3. Assign walk key if you want to be able to walk.
+3. **(Required)** Your crouch/walk hold vs toggle settings must match, else this mod will do nothing and spam you with PDA warning messages.
+4. (Optional) assign walk key
 
 ## Other mods
 

@@ -6,7 +6,7 @@ function on_mcm_load()
 			{
 				id = "main",
 				sh = true,
-				text = "Main",
+				text = "ui_mcm_dorn_pose_controls_main_section",
 				gr = {
 					{
 						id = "main_description",
@@ -32,7 +32,7 @@ function on_mcm_load()
 			{
 				id = "development",
 				sh = true,
-				text = "Development",
+				text = "ui_mcm_dorn_pose_controls_development_section",
 				gr = {
 					{
 						id = "debug_overlay",
