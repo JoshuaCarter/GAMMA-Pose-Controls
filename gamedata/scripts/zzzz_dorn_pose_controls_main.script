@@ -331,9 +331,7 @@ local function on_before_key_hold(key, bind, _dis, flags)
 	elseif bind == key_bindings.kACCEL then
 		block(flags)
 		with_synthetic_input(function()
-			if not IsMoveState("mcCrouch") then
-				hold_bind(key_bindings.kCROUCH)
-			end
+			hold_bind(key_bindings.kCROUCH)
 			hold_bind(key_bindings.kACCEL)
 		end)
 	end
