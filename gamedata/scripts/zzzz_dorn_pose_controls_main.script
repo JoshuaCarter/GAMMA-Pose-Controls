@@ -11,12 +11,16 @@
 	g_walk_toggle). Both must match; hold uses hold_action on key-hold ticks,
 	toggle uses one engine bind step per update. Mixed settings disable the mod.
 
+	FDDA body search / Faster Skinning briefly flip g_crouch_toggle to pulse
+	crouch. We cache the player's real preference so that trick does not yank us
+	into toggle handling, and we pass those scripted pulses straight through.
+
 	Engine move states remain the source of truth so Dorns_Prone_Fix and other
 	mods can read pose via IsMoveState("mcCrouch") / IsMoveState("mcAccel").
 ]]
 
 local MOD_ID = "dorn_pose_controls"
-local DORN_COMMON_VERSION = "dorn_common_c62f913d" -- managed by sync-dorn-common.sh, do not hand-edit
+local DORN_COMMON_VERSION = "dorn_common_442e61f8" -- managed by sync-dorn-common.sh, do not hand-edit
 
 local DORN
 
@@ -49,6 +53,9 @@ local applying_pose = false
 local pending_goal = nil
 local mixed_game_settings = false
 local mixed_warn_shown = false
+-- Player preference from options / first update. Not the live console value —
+-- other mods temporarily flip g_crouch_toggle for scripted crouch pulses.
+local cached_crouch_toggle = false
 
 local function log(msg)
 	if not DORN.dbg then
@@ -83,11 +90,27 @@ local function get_pose()
 end
 
 local function use_hold_mode()
-	return not (get_console_cmd(1, "g_crouch_toggle") or false)
+	return not cached_crouch_toggle
 end
 
 local function mod_active()
 	return CONFIG.enabled and not mixed_game_settings
+end
+
+-- Let FDDA / skinning crouch pulses hit the engine instead of our key remap.
+local function passthrough_scripted_pose_pulse()
+	-- Those mods only force-enable toggle for a press/release; never force-disable.
+	local live_crouch_toggle = get_console_cmd(1, "g_crouch_toggle") or false
+	if live_crouch_toggle and not cached_crouch_toggle then
+		return true
+	end
+	if _G.lam2 and lam2.get_current_action then
+		local action = lam2.get_current_action()
+		if action and action.tag == "body_search" then
+			return true
+		end
+	end
+	return false
 end
 
 local function show_pda_tip(text)
@@ -105,6 +128,7 @@ local function refresh_game_input_settings()
 	local was_mixed = mixed_game_settings
 	local crouch_toggle = get_console_cmd(1, "g_crouch_toggle") or false
 	local walk_toggle = get_console_cmd(1, "g_walk_toggle") or false
+	cached_crouch_toggle = crouch_toggle
 	mixed_game_settings = crouch_toggle ~= walk_toggle
 	if mixed_game_settings then
 		pending_goal = nil
@@ -139,11 +163,12 @@ local function on_option_change()
 	end
 end
 
-local function input_allowed()
+-- Keys need a free HUD. Pending pose steps may finish during loot UI.
+local function actor_can_change_pose()
 	if not DORN.sys.ready(MOD_ID, db, on_option_change) then
 		return false
 	end
-	if device():is_paused() or not actor_menu.is_hud_free() then
+	if device():is_paused() then
 		return false
 	end
 	for state in pairs(BLOCKED_MOVE_STATES) do
@@ -152,6 +177,10 @@ local function input_allowed()
 		end
 	end
 	return true
+end
+
+local function input_allowed()
+	return actor_can_change_pose() and actor_menu.is_hud_free()
 end
 
 local function is_walk_key(key)
@@ -279,6 +308,11 @@ local function on_before_key_press(key, bind, _dis, flags)
 		return
 	end
 
+	-- Scripted crouch pulses (FDDA body search, Faster Skinning) — leave alone.
+	if passthrough_scripted_pose_pulse() then
+		return
+	end
+
 	if bind == key_bindings.kCROUCH then
 		if not use_hold_mode() then
 			block(flags)
@@ -306,6 +340,10 @@ local function on_before_key_hold(key, bind, _dis, flags)
 	end
 
 	if not use_hold_mode() then
+		return
+	end
+
+	if passthrough_scripted_pose_pulse() then
 		return
 	end
 
@@ -342,6 +380,10 @@ local function on_before_key_release(key, bind, _dis, flags)
 		return
 	end
 
+	if passthrough_scripted_pose_pulse() then
+		return
+	end
+
 	if use_hold_mode() then
 		if is_walk_key(key) and get_pose() == POSE.WALK then
 			with_synthetic_input(function()
@@ -371,7 +413,8 @@ local function on_actor_on_update()
 		return
 	end
 
-	if pending_goal and mod_active() and input_allowed() and not use_hold_mode() then
+	-- Finish in-progress transitions even while loot UI is open (FDDA body search).
+	if pending_goal and mod_active() and actor_can_change_pose() and not use_hold_mode() then
 		with_synthetic_input(function()
 			if step_toward(pending_goal) then
 				pending_goal = nil

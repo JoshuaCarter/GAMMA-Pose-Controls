@@ -1,4 +1,4 @@
-# Dorn's Pose Controls v0.1.1
+# Dorn's Pose Controls v0.1.2
 
 Direct pose keybinds for **S.T.A.L.K.E.R. G.A.M.M.A.**
 
